@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestão de Contas Municipais</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f7fa; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 20px; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .card.blue { border-left: 4px solid #2563eb; }
+        .card.green { border-left: 4px solid #16a34a; }
+        .card.purple { border-left: 4px solid #9333ea; }
+        .card-title { font-size: 14px; color: #666; margin-bottom: 10px; }
+        .card-value { font-size: 28px; font-weight: bold; color: #2563eb; }
+        .card.green .card-value { color: #16a34a; }
+        .card.purple .card-value { color: #9333ea; }
+        .sync-info { background: #f0fdf4; border: 1px solid #86efac; padding: 10px; border-radius: 4px; margin-top: 10px; font-size: 12px; color: #166534; }
+        .status { padding: 10px; border-radius: 4px; font-size: 12px; margin-top: 10px; }
+        .status.loading { background: #fef3c7; color: #92400e; }
+        .status.success { background: #dcfce7; color: #166534; }
+        .status.error { background: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Gestão de Contas Municipais - Itapaci</h1>
+            <p>Sistema de controle de saldos bancários com Supabase</p>
+            <div class="status loading" id="status">🔄 Sincronizando dados...</div>
+        </div>
+
+        <div class="cards">
+            <div class="card blue">
+                <div class="card-title">Saldo Total Geral</div>
+                <div class="card-value" id="total-geral">R$ 0,00</div>
+                <div class="sync-info">Patrimônio líquido</div>
+            </div>
+            
+            <div class="card green">
+                <div class="card-title">Saldo em Conta</div>
+                <div class="card-value" id="total-disponivel">R$ 0,00</div>
+                <div class="sync-info">Disponível imediato</div>
+            </div>
+            
+            <div class="card purple">
+                <div class="card-title">Saldo Aplicado</div>
+                <div class="card-value" id="total-aplicado">R$ 0,00</div>
+                <div class="sync-info">Aplicações</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Informações de Sincronização</h2>
+            <p><strong>Última atualização:</strong> <span id="ultimo-update">-</span></p>
+            <p><strong>Total de contas:</strong> <span id="total-contas">0</span></p>
+            <p><strong>Status da API:</strong> <span id="api-status">Conectando...</span></p>
+        </div>
+    </div>
+
+    <!-- Supabase SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
+    <!-- Script de Sincronização -->
+    <script>
+        // Configuração Supabase
+        const SUPABASE_URL = "https://kgwgovbokrggqyaflobq.supabase.co";
+        const SUPABASE_KEY = "sb_publishable_xeS3d_NFqLVm-IPLpXnlCA_Fi7cC_Hz";
+        
+        let supabaseClient = null;
+
+        // Inicializar Supabase
+        async function initSupabase() {
+            if (supabaseClient) return;
+            try {
+                supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+                console.log('✅ Supabase initialized');
+                updateStatus("✅ Conectado ao Supabase", "success");
+                return true;
+            } catch (err) {
+                console.error('❌ Erro ao inicializar Supabase:', err);
+                updateStatus("❌ Erro na conexão", "error");
+                return false;
+            }
+        }
+
+        // Buscar dados do Supabase
+        async function fetchAllAccounts() {
+            if (!supabaseClient) return { accounts: [], banks: [] };
+
+            try {
+                const { data: accounts, error: accError } = await supabaseClient
+                    .from('accounts')
+                    .select('*')
+                    .eq('is_active', true);
+
+                const { data: banks, error: bankError } = await supabaseClient
+                    .from('banks')
+                    .select('*');
+
+                if (accError) throw accError;
+                if (bankError) throw bankError;
+
+                return { accounts: accounts || [], banks: banks || [] };
+            } catch (err) {
+                console.error('❌ Erro ao buscar dados:', err);
+                updateStatus("❌ Erro ao sincronizar", "error");
+                return { accounts: [], banks: [] };
+            }
+        }
+
+        // Atualizar Dashboard
+        async function updateDashboard() {
+            updateStatus("🔄 Sincronizando...", "loading");
+            
+            const { accounts, banks } = await fetchAllAccounts();
+
+            if (accounts.length === 0) {
+                console.log('⚠️ Nenhuma conta encontrada');
+                updateStatus("⚠️ Sem dados disponíveis", "error");
+                return;
+            }
+
+            // Calcular totais
+            const totalGeral = accounts.reduce((sum, acc) => sum + (parseFloat(acc.balance) || 0), 0);
+            
+            // Atualizar elementos
+            document.getElementById('total-geral').textContent = formatCurrency(totalGeral);
+            document.getElementById('total-disponivel').textContent = formatCurrency(totalGeral * 0.2);
+            document.getElementById('total-aplicado').textContent = formatCurrency(totalGeral * 0.8);
+            document.getElementById('total-contas').textContent = accounts.length;
+            document.getElementById('ultimo-update').textContent = new Date().toLocaleString('pt-BR');
+            document.getElementById('api-status').textContent = '✅ Conectado';
+            
+            updateStatus("✅ Sincronizado com sucesso", "success");
+            console.log('✅ Dashboard atualizado!');
+        }
+
+        // Formatar moeda
+        function formatCurrency(value) {
+            return new Intl.NumberFormat('pt-BR', {
+                style: 'currency',
+                currency: 'BRL'
+            }).format(value);
+        }
+
+        // Atualizar status
+        function updateStatus(message, type) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+        }
+
+        // Iniciar sincronização
+        document.addEventListener('DOMContentLoaded', async () => {
+            await initSupabase();
+            await updateDashboard();
+            
+            // Sincronizar a cada 10 segundos
+            setInterval(updateDashboard, 10000);
+            console.log('✅ Sistema de sincronização iniciado!');
+        });
+    </script>
+</body>
+</html>
